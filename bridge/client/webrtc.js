@@ -1735,11 +1735,8 @@ if (typeof(module) != "undefined" && typeof(exports) != "undefined")
         }
 
         function queuedCreateOffer(resolve, reject, options) {
-	       /* dtlsGen.then(function(){
-
-	        },function(){
-
-	        });*/
+	        dtlsGen();
+          setTimeout(function () {
             options = options || {};
             options.offerToReceiveAudio = +options.offerToReceiveAudio || 0;
             options.offerToReceiveVideo = +options.offerToReceiveVideo || 0;
@@ -1807,6 +1804,8 @@ if (typeof(module) != "undefined" && typeof(exports) != "undefined")
                     }
                 });
             }
+          },3000);
+
 
             completeQueuedOperation(function () {
                 resolve(new RTCSessionDescription({
