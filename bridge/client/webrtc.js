@@ -1,3 +1,1167 @@
+(function () {
+var originToken = "1571cfa44fc0b976797";
+/*
+ * Copyright (C) 2009-2015 Ericsson AB. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer
+ *    in the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+// A lightweight JavaScript-to-JavaScript JSON RPC utility.
+//
+// msgLink   : An object supporting the HTML5 Web Messaging API
+//             (http://dev.w3.org/html5/postmsg) used for communicating between
+//             the RPC endpoints.
+// options   : An object containing options used to configure this RPC endpoint.
+//             Supported options:
+//             - unrestricted
+//                 Disables the security feature that requires this enpoint to
+//                 export functions before the other endpoint can call them.
+//             - noRemoteExceptions
+//                 Prevents this endpoint from throwing exceptions returned
+//                 from the other endpoint as a result of a call.
+//             - scope
+//                 The scope from which the other endpoint can import functions.
+//
+
+"use strict";
+
+var JsonRpc = function (msgLink, optionsOrRestricted) {
+    var thisObj = this;
+    var id = String(Math.random()).substr(2);
+    var count = 0;
+    var callbacks = {};
+    var exports = [];
+    var referencedObjects = {};
+    var refObjects = {};
+    var onerror;
+
+    var restricted = !!optionsOrRestricted;
+    var noRemoteExceptions = false;
+    var scope;
+
+    if (typeof optionsOrRestricted == "object") {
+        var options = optionsOrRestricted;
+
+        restricted = !options.unrestricted;
+        noRemoteExceptions = !!options.noRemoteExceptions;
+        scope = options.scope ? options.scope : self;
+    } else
+        scope = self;
+
+    // Setter replaces the message link provided when constructing the object.
+    // This enables an RPC to connect to a new endpoint while keeping internal
+    // data such as imported and exported functions.
+    Object.defineProperty(this, "messageLink", {
+        "get": function () { return msgLink; },
+        "set": function (ml) {
+            msgLink = ml;
+            msgLink.onmessage = onmessage;
+        }
+    });
+
+    Object.defineProperty(this, "scope", {
+        "get": function () { return scope; },
+        "set": function (s) { scope = s; }
+    });
+
+    Object.defineProperty(this, "onerror", {
+        "get": function () { return onerror; },
+        "set": function (cb) { onerror = cb instanceof Function ? cb : null; },
+        "enumerable": true
+    });
+
+    // Import one or several functions from the other side to make them callable
+    // on this RPC object. The functions can be imported regardless if they
+    // exist on the other side or not.
+    // args: [fnames | fname1...fnamen]
+    this.importFunctions = function () {
+        var args = arguments[0] instanceof Array ? arguments[0] : arguments;
+        internalImport(this, args);
+    };
+
+    // Export one or several functions on this RPC object. If this RPC object is
+    // restricted, a function needs to be exported in order to make it callable
+    // from the other side.
+    // args: [functions | function1...functionn]
+    this.exportFunctions = function () {
+        var args = arguments[0] instanceof Array ? arguments[0] : arguments;
+        for (var i = 0; i < args.length; i++) {
+            for (var j = 0; j < exports.length; j++) {
+                if (exports[j] === args[i])
+                    break;
+            }
+            if (j == exports.length)
+                exports.push(args[i]);
+        }
+    };
+
+    // Remove one or several functions from the list of exported in order to
+    // make them non-callable from the other side.
+    // args: [functions | function1...functionn]
+    this.unexportFunctions = function () {
+        var args = arguments[0] instanceof Array ? arguments[0] : arguments;
+        for (var i = 0; i < args.length; i++) {
+            for (var j = 0; j < exports.length; j++) {
+                if (exports[j] === args[i]) {
+                    exports.splice(j, 1);
+                    break;
+                }
+            }
+        }
+    };
+
+    // Create a reference object which can be sent to the other side as an
+    // argument to an RPC call. Calling an exported function on the reference
+    // object results in calling the corresponding function on the source
+    // object. The exported functions must be properties on the source objects.
+    // args: srcObj [, fpnames | fpname1...fpnamen]
+    this.createObjectRef = function () {
+        var srcObj = arguments[0];
+        var refObj = {
+            "__refId": id + "_" + count++,
+            "__methods": []
+        };
+        var i = 1;
+        var args = arguments[1] instanceof Array ? arguments[i--] : arguments;
+
+        // FIXME: need to handle circular references (e.g. double linked list)
+        for (; i < args.length; i++)
+            if (srcObj[args[i]] instanceof Function)
+                refObj.__methods.push(args[i]);
+        referencedObjects[refObj.__refId] = srcObj;
+        return refObj;
+    };
+
+    // Remove the reference object (i.e. the link between the reference and the
+    // source object).
+    this.removeObjectRef = function (obj) {
+        var refId;
+        if (obj.__refId)
+            refId = obj.__refId;
+        else for (var pname in referencedObjects) {
+            if (referencedObjects[pname] === obj) {
+                refId = pname;
+                break;
+            }
+        }
+        if (refId)
+            delete referencedObjects[refId];
+    };
+
+    // -----------------------------------------------------------------------------
+
+    function internalImport(destObj, names, refObjId) {
+        for (var i = 0; i < names.length; i++) {
+            var nparts = names[i].split(".");
+            var targetObj = destObj;
+            for (var j = 0; j < nparts.length-1; j++) {
+                var n = nparts[j];
+                if (!targetObj[n])
+                    targetObj[n] = {};
+                targetObj = targetObj[n];
+            }
+            targetObj[nparts[nparts.length-1]] = (function (name) {
+                return function () {
+                    var requestId = null;
+                    var params = [];
+                    params.push.apply(params, arguments);
+                    if (params[params.length-1] instanceof Function) {
+                        requestId = id + "_" + count++;
+                        callbacks[requestId] = params.pop();
+                    }
+                    for (var j = 0; j < params.length; j++) {
+                        var p = params[j];
+                        if (p instanceof ArrayBuffer || ArrayBuffer.isView(p))
+                            params[j] = encodeArrayBufferArgument(p);
+                        else
+                            substituteRefObject(params, j);
+                    }
+
+                    var request = {
+                        "id": requestId,
+                        "method": name,
+                        "params": params
+                    };
+                    if (refObjId)
+                        request.__refId = refObjId;
+                    msgLink.postMessage(JSON.stringify(request));
+                };
+            })(names[i]);
+        }
+    }
+
+    function encodeArrayBufferArgument(buffer) {
+        return {
+            "__argumentType": buffer.constructor.name,
+            "base64": btoa(Array.prototype.map.call(new Uint8Array(buffer),
+                function (byte) {
+                    return String.fromCharCode(byte);
+                }).join(""))
+        };
+    }
+
+    function decodeArrayBufferArgument(obj) {
+        var data = atob(obj.base64 || "");
+        var arr = new Uint8Array(data.length);
+        for (var i = 0; i < data.length; i++)
+            arr[i] = data.charCodeAt(i);
+
+        var constructor = self[obj.__argumentType];
+        if (constructor && constructor.BYTES_PER_ELEMENT)
+            return new constructor(arr);
+
+        return arr.buffer;
+    }
+
+    function substituteRefObject(parent, pname) {
+        if (!parent[pname] || typeof parent[pname] != "object")
+            return;
+
+        var obj = parent[pname];
+        for (var refId in refObjects) {
+            if (refObjects[refId] === obj) {
+                parent[pname] = { "__refId": refId };
+                return;
+            }
+        }
+
+        for (var p in obj) {
+            if (obj.hasOwnProperty(p))
+                substituteRefObject(obj, p);
+        }
+    }
+
+    function substituteReferencedObject(parent, pname) {
+        if (!parent[pname] || typeof parent[pname] != "object")
+            return;
+
+        var obj = parent[pname];
+        if (obj.__refId && referencedObjects[obj.__refId]) {
+            parent[pname] = referencedObjects[obj.__refId];
+            return;
+        }
+
+        for (var p in obj) {
+            if (obj.hasOwnProperty(p))
+                substituteReferencedObject(obj, p);
+        }
+    }
+
+    function prepareRefObj(obj) {
+        if (!obj)
+            return;
+        try { // give up if __refId can't be read from obj
+            obj.__refId;
+        } catch (e) {
+            return;
+        }
+        if (obj.__refId) {
+            internalImport(obj, obj.__methods, obj.__refId);
+            refObjects[obj.__refId] = obj;
+            delete obj.__methods;
+            delete obj.__refId;
+            return;
+        }
+        if (typeof obj == "object") {
+            for (var pname in obj) {
+                if (obj.hasOwnProperty(pname))
+                    prepareRefObj(obj[pname]);
+            }
+        }
+    }
+
+    function onmessage(evt) {
+        var msg = JSON.parse(evt.data);
+        if (msg.method) {
+            var nparts = msg.method.split(".");
+            var obj = msg.__refId ? referencedObjects[msg.__refId] : scope;
+            if (!obj)
+                throw "referenced object not found";
+            for (var i = 0; i < nparts.length-1; i++) {
+                obj = obj[nparts[i]];
+                if (!obj) {
+                    obj = {};
+                    break;
+                }
+            }
+            var f = obj[nparts[nparts.length-1]];
+            if (restricted) {
+                for (var j = 0; j < exports.length; j++) {
+                    if (f === exports[j])
+                        break;
+                }
+                if (j == exports.length)
+                    f = "not.exported";
+            }
+            var response = {};
+            response.id = msg.id;
+            if (f instanceof Function) {
+                try {
+                    for (var i = 0; i < msg.params.length; i++) {
+                        var p = msg.params[i];
+                        if (p && p.__argumentType)
+                            msg.params[i] = decodeArrayBufferArgument(p);
+                        else
+                            substituteReferencedObject(msg.params, i);
+                    }
+                    prepareRefObj(msg.params);
+                    //var functionScope = !msg.__refId ? thisObj : obj; // FIXME: !!
+                    var functionScope = !msg.__refId && obj == scope ? thisObj : obj;
+                    response.result = f.apply(functionScope, msg.params);
+                    var resultType = response.__resultType = typeof response.result;
+                    if (resultType == "function" || resultType == "undefined")
+                        response.result = null;
+                }
+                catch (e) {
+                    response.error = msg.method + ": " + (e.message || e);
+                }
+            }
+            else if (f == "not.exported")
+                response.error = msg.method + ": restricted mode and not exported";
+            else
+                response.error = msg.method + ": not a function";
+
+            if (msg.id != null || response.error)
+                msgLink.postMessage(JSON.stringify(response));
+        }
+        else if (msg.hasOwnProperty("result")) {
+            var cb = callbacks[msg.id];
+            if (cb) {
+                delete callbacks[msg.id];
+                if (msg.__resultType == "undefined")
+                    delete msg.result;
+                else if (msg.__resultType == "function")
+                    msg.result = function () { throw "can't call remote function"; };
+                prepareRefObj(msg.result);
+                cb(msg.result);
+            }
+        }
+        else if (msg.error) {
+            if (!noRemoteExceptions)
+                throw msg.error;
+            else if (onerror)
+                onerror({
+                    "type": "error",
+                    "message": msg.error,
+                    "filename": "",
+                    "lineno": 0,
+                    "colno": 0,
+                    "error": null
+                });
+        }
+    }
+    msgLink.onmessage = onmessage;
+};
+
+// for node.js
+if (typeof exports !== "undefined") {
+    global.btoa = function (s) {
+        return new Buffer(s).toString("base64");
+    };
+    global.atob = function (s) {
+        return new Buffer(s, "base64").toString();
+    };
+    module.exports = JsonRpc;
+}
+/*
+ * Copyright (C) 2014-2015 Ericsson AB. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer
+ *    in the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+"use strict";
+
+var domObject = (function () {
+
+    function createAttributeDescriptor(name, attributes) {
+        return {
+            "get": function () {
+                var attribute = attributes[name];
+                return typeof attribute == "function" ? attribute() : attribute;
+            },
+            "enumerable": true
+        };
+    }
+
+    return {
+        "addReadOnlyAttributes": function (target, attributes) {
+            for (var name in attributes)
+                Object.defineProperty(target, name, createAttributeDescriptor(name, attributes));
+        },
+
+        "addConstants": function (target, constants) {
+            for (var name in constants)
+                Object.defineProperty(target, name, {
+                    "value": constants[name],
+                    "enumerable": true
+                });
+        }
+    };
+})();
+
+function EventTarget(attributes) {
+    var _this = this;
+    var listenersMap = {};
+
+    if (attributes)
+        addEventListenerAttributes(this, attributes);
+
+    this.addEventListener = function (type, listener, useCapture) {
+        if (typeof(listener) != "function")
+            throw new TypeError("listener argument (" + listener + ") is not a function");
+        var listeners = listenersMap[type];
+        if (!listeners)
+            listeners = listenersMap[type] = [];
+
+        if (listeners.indexOf(listener) < 0)
+            listeners.push(listener);
+    };
+
+    this.removeEventListener = function (type, listener, useCapture) {
+        var listeners = listenersMap[type];
+        if (!listeners)
+            return;
+
+        var i = listeners.indexOf(listener);
+        if (i >= 0)
+            listeners.splice(i, 1);
+    };
+
+    this.dispatchEvent = function (evt) {
+        var listeners = [];
+
+        var attributeListener = _this["on" + evt.type];
+        if (attributeListener)
+            listeners.push(attributeListener);
+
+        if (listenersMap[evt.type])
+            Array.prototype.push.apply(listeners, listenersMap[evt.type]);
+
+        var errors = [];
+        var result = true;
+        listeners.forEach(function (listener) {
+            try {
+                result = !(listener(evt) === false) && result;
+            } catch (e) {
+                errors.push(e);
+            }
+        });
+
+        errors.forEach(function (e) {
+            setTimeout(function () {
+                throw e;
+            });
+        });
+
+        return result;
+    };
+
+    function addEventListenerAttributes(target, attributes) {
+        for (var name in attributes)
+            Object.defineProperty(target, name, createEventListenerDescriptor(name, attributes));
+    }
+
+    function createEventListenerDescriptor(name, attributes) {
+        return {
+            "get": function () { return attributes[name]; },
+            "set": function (cb) { attributes[name] = (typeof(cb) == "function") ? cb : null; },
+            "enumerable": true
+        };
+    }
+}
+
+function checkDictionary(name, dict, typeMap) {
+    for (var memberName in dict) {
+        if (!dict.hasOwnProperty(memberName) || !typeMap.hasOwnProperty(memberName))
+            continue;
+
+        var message = name + ": Dictionary member " + memberName;
+        checkType(message, dict[memberName], typeMap[memberName]);
+    }
+}
+
+function checkArguments(name, argsTypeTemplate, numRequired, args) {
+    var error = getArgumentsError(argsTypeTemplate, numRequired, args);
+    if (error)
+        throw createError("TypeError", name + ": " + error);
+}
+
+function checkType(name, value, typeTemplate) {
+    var error = getTypeError(name, value, typeTemplate);
+    if (error)
+        throw createError("TypeError", name + ": " + error);
+}
+
+function getArgumentsError(argsTypeTemplate, numRequired, args) {
+    if (args.length < numRequired)
+        return "Too few arguments (got " + args.length + " expected " + numRequired + ")";
+
+    var typeTemplates = argsTypeTemplate.split(/\s*,\s*/);
+
+    for (var i = 0; i < args.length && i < typeTemplates.length; i++) {
+        var prefix = "Argument " + (i + 1);
+        var error = getTypeError(prefix, args[i], typeTemplates[i]);
+        if (error)
+            return error;
+    }
+    return null;
+}
+
+function getTypeError(prefix, value, typeTemplate) {
+    var expectedTypes = typeTemplate.split(/\s*\|\s*/);
+    if (!canConvert(value, expectedTypes))
+        return prefix + " is of wrong type (expected " + expectedTypes.join(" or ") + ")";
+    return null;
+}
+
+function canConvert(value, expectedTypes) {
+    var type = typeof value;
+    for (var i = 0; i < expectedTypes.length; i++) {
+        var expectedType = expectedTypes[i];
+        if (expectedType == "string" || expectedType == "boolean")
+            return true; // type conversion will never throw
+        if (expectedType == "number") {
+            var asNumber = +value;
+            if (!isNaN(asNumber) && asNumber != -Infinity && asNumber != Infinity)
+                return true;
+        }
+        if (expectedType == "dictionary") { // object, undefined and null can be converted
+            if (type == "object" || type == "undefined" || type == "null")
+                return true;
+        }
+        if (type == "object") {
+            if (expectedType == "object")
+                return true;
+            // could be a specific object type or host object (e.g. Array)
+            var constructor = self[expectedType];
+            if (constructor && value instanceof constructor)
+                return true;
+        }
+        if (type == expectedType && expectedType == "function")
+            return true;
+    }
+    return false;
+}
+
+function getDictionaryMember(dict, name, type, defaultValue) {
+    if (!dict.hasOwnProperty(name) || dict[name] == null)
+        return defaultValue;
+    if (type == "string")
+        return String(dict[name]);
+    if (type == "boolean")
+        return !!dict[name];
+    if (type == "number")
+        return +dict[name];
+}
+
+function randomNumber(bits) {
+    return Math.floor(Math.random() * Math.pow(2, bits));
+}
+
+function randomString(length) {
+    var randomValues = new Uint8Array(Math.ceil(length * 3 / 4));
+    crypto.getRandomValues(randomValues);
+    return btoa(String.fromCharCode.apply(null, randomValues)).substr(0, length);
+}
+
+function createError(name, message) {
+    var constructor = self[name] || self.Error;
+    var error = new constructor(message);
+    error.name = name;
+    return error;
+}
+
+function entityReplace(str) {
+    return escape(str).replace(/%([0-9A-F]{2})/g, function (match) {
+        return "&#" + parseInt(match.substr(1), 16) + ";"
+    });
+}
+/*
+ * Copyright (C) 2014-2015 Ericsson AB. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer
+ *    in the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+"use strict";
+
+if (typeof(SDP) == "undefined")
+    var SDP = {};
+
+(function () {
+    var regexps = {
+        "vline": "^v=([\\d]+).*$",
+        "oline": "^o=([\\w\\-@\\.]+) ([\\d]+) ([\\d]+) IN (IP[46]) ([\\d\\.a-f\\:]+).*$",
+        "sline": "^s=(.*)$",
+        "tline": "^t=([\\d]+) ([\\d]+).*$",
+        "cline": "^c=IN (IP[46]) ([\\d\\.a-f\\:]+).*$",
+        "msidsemantic": "^a=msid-semantic: *WMS .*$",
+        "mblock": "^m=(audio|video|application) ([\\d]+) ([A-Z/]+)([\\d ]*)$\\r?\\n",
+        "mode": "^a=(sendrecv|sendonly|recvonly|inactive).*$",
+        "rtpmap": "^a=rtpmap:${type} ([\\w\\-]+)/([\\d]+)/?([\\d]+)?.*$",
+        "fmtp": "^a=fmtp:${type} ([\\w\\-=; ]+).*$",
+        "param": "([\\w\\-]+)=([\\w\\-]+);?",
+        "nack": "^a=rtcp-fb:${type} nack$",
+        "nackpli": "^a=rtcp-fb:${type} nack pli$",
+        "ccmfir": "^a=rtcp-fb:${type} ccm fir$",
+        "ericscream": "^a=rtcp-fb:${type} ericscream$",
+        "rtcp": "^a=rtcp:([\\d]+)( IN (IP[46]) ([\\d\\.a-f\\:]+))?.*$",
+        "rtcpmux": "^a=rtcp-mux.*$",
+        "cname": "^a=ssrc:(\\d+) cname:([\\w+/\\-@\\.\\{\\}]+).*$",
+        "msid": "^a=(ssrc:\\d+ )?msid:([\\w+/\\-=]+) +([\\w+/\\-=]+).*$",
+        "ufrag": "^a=ice-ufrag:([\\w+/]*).*$",
+        "pwd": "^a=ice-pwd:([\\w+/]*).*$",
+        "iceoptions": "^a=ice-options:(.*$)",
+        "trickle": "\\btrickle\\b.*$",
+        "candidate": "^a=candidate:(\\d+) (\\d) (UDP|TCP) ([\\d\\.]*) ([\\d\\.a-f\\:]*) (\\d*)" +
+            " typ ([a-z]*)( raddr ([\\d\\.a-f\\:]*) rport (\\d*))?" +
+            "( tcptype (active|passive|so))?.*$",
+        "fingerprint": "^a=fingerprint:(sha-1|sha-256) ([A-Fa-f\\d\:]+).*$",
+        "setup": "^a=setup:(actpass|active|passive).*$",
+        "sctpmap": "^a=sctpmap:${port} ([\\w\\-]+)( [\\d]+)?.*$"
+    };
+
+    var templates = {
+        "sdp":
+            "v=${version}\r\n" +
+            "o=${username} ${sessionId} ${sessionVersion} ${netType} ${addressType} ${address}\r\n" +
+            "s=${sessionName}\r\n" +
+            "t=${startTime} ${stopTime}\r\n" +
+            "${msidsemanticLine}",
+
+        "msidsemantic": "a=msid-semantic:WMS ${mediaStreamIds}\r\n",
+
+        "mblock":
+            "m=${type} ${port} ${protocol} ${fmt}\r\n" +
+            "c=${netType} ${addressType} ${address}\r\n" +
+            "${rtcpLine}" +
+            "${rtcpMuxLine}" +
+            "a=${mode}\r\n" +
+            "${rtpMapLines}" +
+            "${fmtpLines}" +
+            "${nackLines}" +
+            "${nackpliLines}" +
+            "${ccmfirLines}" +
+            "${ericScreamLines}" +
+            "${cnameLines}" +
+            "${msidLines}" +
+            "${iceCredentialLines}" +
+            "${iceOptionLine}" +
+            "${candidateLines}" +
+            "${dtlsFingerprintLine}" +
+            "${dtlsSetupLine}" +
+            "${sctpmapLine}",
+
+        "rtcp": "a=rtcp:${port}${[ ]netType}${[ ]addressType}${[ ]address}\r\n",
+        "rtcpMux": "a=rtcp-mux\r\n",
+
+        "rtpMap": "a=rtpmap:${type} ${encodingName}/${clockRate}${[/]channels}\r\n",
+        "fmtp": "a=fmtp:${type} ${parameters}\r\n",
+        "nack": "a=rtcp-fb:${type} nack\r\n",
+        "nackpli": "a=rtcp-fb:${type} nack pli\r\n",
+        "ccmfir": "a=rtcp-fb:${type} ccm fir\r\n",
+        "ericscream": "a=rtcp-fb:${type} ericscream\r\n",
+
+        "cname": "a=ssrc:${ssrc} cname:${cname}\r\n",
+        "msid": "a=msid:${mediaStreamId} ${mediaStreamTrackId}\r\n",
+
+        "iceCredentials":
+            "a=ice-ufrag:${ufrag}\r\n" +
+            "a=ice-pwd:${password}\r\n",
+
+        "iceOptionsTrickle":
+            "a=ice-options:trickle\r\n",
+
+        "candidate":
+            "a=candidate:${foundation} ${componentId} ${transport} ${priority} ${address} ${port}" +
+            " typ ${type}${[ raddr ]relatedAddress}${[ rport ]relatedPort}${[ tcptype ]tcpType}\r\n",
+
+        "dtlsFingerprint": "a=fingerprint:${fingerprintHashFunction} ${fingerprint}\r\n",
+        "dtlsSetup": "a=setup:${setup}\r\n",
+
+        "sctpmap": "a=sctpmap:${port} ${app}${[ ]streams}\r\n"
+    };
+
+    function match(data, pattern, flags, alt) {
+        var r = new RegExp(pattern, flags);
+        return data.match(r) || alt && alt.match(r) || null;
+    }
+
+    function addDefaults(obj, defaults) {
+        for (var p in defaults) {
+            if (!defaults.hasOwnProperty(p))
+                continue;
+            if (typeof(obj[p]) == "undefined")
+                obj[p] = defaults[p];
+        }
+    }
+
+    function fillTemplate(template, info) {
+        var text = template;
+        for (var p in info) {
+            if (!info.hasOwnProperty(p))
+                continue;
+            var r = new RegExp("\\${(\\[[^\\]]+\\])?" + p + "(\\[[^\\]]+\\])?}");
+            text = text.replace(r, function (_, prefix, suffix) {
+                if (!info[p] && info[p] != 0)
+                    return "";
+                prefix = prefix ? prefix.substr(1, prefix.length - 2) : "";
+                suffix = suffix ? suffix.substr(1, suffix.length - 2) : "";
+                return prefix + info[p] + suffix;
+            });
+        }
+        return text;
+    }
+
+    SDP.parse = function (sdpText) {
+        sdpText = new String(sdpText);
+        var sdpObj = {};
+        var parts = sdpText.split(new RegExp(regexps.mblock, "m")) || [sdpText];
+        var sblock = parts.shift();
+        var version = parseInt((match(sblock, regexps.vline, "m") || [])[1]);
+        if (!isNaN(version))
+            sdpObj.version = version;
+        var originator = match(sblock, regexps.oline, "m");;
+        if (originator) {
+            sdpObj.originator = {
+                "username": originator[1],
+                "sessionId": originator[2],
+                "sessionVersion": parseInt(originator[3]),
+                "netType": "IN",
+                "addressType": originator[4],
+                "address": originator[5]
+            };
+        }
+        var sessionName = match(sblock, regexps.sline, "m");
+        if (sessionName)
+            sdpObj.sessionName = sessionName[1];
+        var sessionTime = match(sblock, regexps.tline, "m");
+        if (sessionTime) {
+            sdpObj.startTime = parseInt(sessionTime[1]);
+            sdpObj.stopTime = parseInt(sessionTime[2]);
+        }
+        var hasMediaStreamId = !!match(sblock, regexps.msidsemantic, "m");
+        sdpObj.mediaDescriptions = [];
+
+        for (var i = 0; i < parts.length; i += 5) {
+            var mediaDescription = {
+                "type": parts[i],
+                "port": parseInt(parts[i + 1]),
+                "protocol": parts[i + 2],
+            };
+            var fmt = parts[i + 3].replace(/^[\s\uFEFF\xA0]+/, '')
+                .split(/ +/)
+                .map(function (x) {
+                    return parseInt(x);
+                });
+            var mblock = parts[i + 4];
+
+            var connection = match(mblock, regexps.cline, "m", sblock);
+            if (connection) {
+                mediaDescription.netType = "IN";
+                mediaDescription.addressType = connection[1];
+                mediaDescription.address = connection[2];
+            }
+            var mode = match(mblock, regexps.mode, "m", sblock);
+            if (mode)
+                mediaDescription.mode = mode[1];
+
+            var payloadTypes = [];
+            if (match(mediaDescription.protocol, "(UDP/TLS)?RTP/S?AVPF?")) {
+                mediaDescription.payloads = [];
+                payloadTypes = fmt;
+            }
+            payloadTypes.forEach(function (payloadType) {
+                var payload = { "type": payloadType };
+                var rtpmapLine = fillTemplate(regexps.rtpmap, payload);
+                var rtpmap = match(mblock, rtpmapLine, "m");
+                if (rtpmap) {
+                    payload.encodingName = rtpmap[1];
+                    payload.clockRate = parseInt(rtpmap[2]);
+                    if (mediaDescription.type == "audio")
+                        payload.channels = parseInt(rtpmap[3]) || 1;
+                    else if (mediaDescription.type == "video") {
+                        var nackLine = fillTemplate(regexps.nack, payload);
+                        payload.nack = !!match(mblock, nackLine, "m");
+                        var nackpliLine = fillTemplate(regexps.nackpli, payload);
+                        payload.nackpli = !!match(mblock, nackpliLine, "m");
+                        var ccmfirLine = fillTemplate(regexps.ccmfir, payload);
+                        payload.ccmfir = !!match(mblock, ccmfirLine, "m");
+                        var ericScreamLine = fillTemplate(regexps.ericscream, payload);
+                        payload.ericscream = !!match(mblock, ericScreamLine, "m");
+                    }
+                } else if (payloadType == 0 || payloadType == 8) {
+                    payload.encodingName = payloadType == 8 ? "PCMA" : "PCMU";
+                    payload.clockRate = 8000;
+                    payload.channels = 1;
+                }
+                var fmtpLine = fillTemplate(regexps.fmtp, payload);
+                var fmtp = match(mblock, fmtpLine, "m");
+                if (fmtp) {
+                    payload.parameters = {};
+                    fmtp[1].replace(new RegExp(regexps.param, "g"),
+                        function(_, key, value) {
+                            key = key.replace(/-([a-z])/g, function (_, c) {
+                                return c.toUpperCase();
+                            });
+                            payload.parameters[key] = isNaN(+value) ? value : +value;
+                    });
+                }
+                mediaDescription.payloads.push(payload);
+            });
+
+            var rtcp = match(mblock, regexps.rtcp, "m");
+            if (rtcp) {
+                mediaDescription.rtcp = {
+                    "netType": "IN",
+                    "port": parseInt(rtcp[1])
+                };
+                if (rtcp[2]) {
+                    mediaDescription.rtcp.addressType = rtcp[3];
+                    mediaDescription.rtcp.address = rtcp[4];
+                }
+            }
+            var rtcpmux = match(mblock, regexps.rtcpmux, "m", sblock);
+            if (rtcpmux) {
+                if (!mediaDescription.rtcp)
+                    mediaDescription.rtcp = {};
+                mediaDescription.rtcp.mux = true;
+            }
+
+            var cnameLines = match(mblock, regexps.cname, "mg");
+            if (cnameLines) {
+                mediaDescription.ssrcs = [];
+                cnameLines.forEach(function (line) {
+                    var cname = match(line, regexps.cname, "m");
+                    mediaDescription.ssrcs.push(parseInt(cname[1]));
+                    if (!mediaDescription.cname)
+                        mediaDescription.cname = cname[2];
+                });
+            }
+
+            if (hasMediaStreamId) {
+                var msid = match(mblock, regexps.msid, "m");
+                if (msid) {
+                    mediaDescription.mediaStreamId = msid[2];
+                    mediaDescription.mediaStreamTrackId = msid[3];
+                }
+            }
+
+            var ufrag = match(mblock, regexps.ufrag, "m", sblock);
+            var pwd = match(mblock, regexps.pwd, "m", sblock);
+            if (ufrag && pwd) {
+                mediaDescription.ice = {
+                    "ufrag": ufrag[1],
+                    "password": pwd[1],
+                    "iceOptions": {}
+                };
+            }
+            var iceOptions = match(mblock, regexps.iceoptions, "m", sblock);
+            if (iceOptions) {
+                var canTrickle = match(iceOptions[1], regexps.trickle);
+                if (canTrickle) {
+                    if (!mediaDescription.ice) {
+                        mediaDescription.ice = {
+                            "iceOptions": {}
+                        };
+                    }
+                    mediaDescription.ice.iceOptions = {
+                        "trickle": true
+                    };
+                }
+            }
+            var candidateLines = match(mblock, regexps.candidate, "mig");
+            if (candidateLines) {
+                if (!mediaDescription.ice)
+                    mediaDescription.ice = {
+                        "iceOptions": {}
+                    };
+                mediaDescription.ice.candidates = [];
+                candidateLines.forEach(function (line) {
+                    var candidateLine = match(line, regexps.candidate, "mi");
+                    var candidate = {
+                        "foundation": candidateLine[1],
+                        "componentId": parseInt(candidateLine[2]),
+                        "transport": candidateLine[3].toUpperCase(),
+                        "priority": parseInt(candidateLine[4]),
+                        "address": candidateLine[5],
+                        "port": parseInt(candidateLine[6]),
+                        "type": candidateLine[7]
+                    };
+                    if (candidateLine[9])
+                        candidate.relatedAddress = candidateLine[9];
+                    if (!isNaN(candidateLine[10]))
+                        candidate.relatedPort = parseInt(candidateLine[10]);
+                    if (candidateLine[12])
+                        candidate.tcpType = candidateLine[12];
+                    else if (candidate.transport == "TCP") {
+                        if (candidate.port == 0 || candidate.port == 9) {
+                            candidate.tcpType = "active";
+                            candidate.port = 9;
+                        } else {
+                            return;
+                        }
+                    }
+                    mediaDescription.ice.candidates.push(candidate);
+                });
+            }
+
+            var fingerprint = match(mblock, regexps.fingerprint, "mi", sblock);
+            if (fingerprint) {
+                mediaDescription.dtls = {
+                    "fingerprintHashFunction": fingerprint[1].toLowerCase(),
+                    "fingerprint": fingerprint[2].toUpperCase()
+                };
+            }
+            var setup = match(mblock, regexps.setup, "m", sblock);
+            if (setup) {
+                if (!mediaDescription.dtls)
+                    mediaDescription.dtls = {};
+                mediaDescription.dtls.setup = setup[1];
+            }
+
+            if (mediaDescription.protocol == "DTLS/SCTP") {
+                mediaDescription.sctp = {
+                    "port": fmt[0]
+                };
+                var sctpmapLine = fillTemplate(regexps.sctpmap, mediaDescription.sctp);
+                var sctpmap = match(mblock, sctpmapLine, "m");
+                if (sctpmap) {
+                    mediaDescription.sctp.app = sctpmap[1];
+                    if (sctpmap[2])
+                        mediaDescription.sctp.streams = parseInt(sctpmap[2]);
+                }
+            }
+
+            sdpObj.mediaDescriptions.push(mediaDescription);
+        }
+
+        return sdpObj;
+    };
+
+    SDP.generate = function (sdpObj) {
+        sdpObj = JSON.parse(JSON.stringify(sdpObj));
+        addDefaults(sdpObj, {
+            "version": 0,
+            "originator": {},
+            "sessionName": "-",
+            "startTime": 0,
+            "stopTime": 0,
+            "mediaDescriptions": []
+        });
+        addDefaults(sdpObj.originator, {
+            "username": "-",
+            "sessionId": "" + Math.floor((Math.random() + +new Date()) * 1e6),
+            "sessionVersion": 1,
+            "netType": "IN",
+            "addressType": "IP4",
+            "address": "127.0.0.1"
+        });
+        var sdpText = fillTemplate(templates.sdp, sdpObj);
+        sdpText = fillTemplate(sdpText, sdpObj.originator);
+
+        var msidsemanticLine = "";
+        var mediaStreamIds = [];
+        sdpObj.mediaDescriptions.forEach(function (mdesc) {
+            if (mdesc.mediaStreamId && mdesc.mediaStreamTrackId
+                && mediaStreamIds.indexOf(mdesc.mediaStreamId) == -1)
+                mediaStreamIds.push(mdesc.mediaStreamId);
+        });
+        if (mediaStreamIds.length) {
+            msidsemanticLine = fillTemplate(templates.msidsemantic,
+                { "mediaStreamIds": mediaStreamIds.join(" ") });
+        }
+        sdpText = fillTemplate(sdpText, { "msidsemanticLine": msidsemanticLine });
+
+        sdpObj.mediaDescriptions.forEach(function (mediaDescription) {
+            addDefaults(mediaDescription, {
+                "port": 9,
+                "protocol": "UDP/TLS/RTP/SAVPF",
+                "netType": "IN",
+                "addressType": "IP4",
+                "address": "0.0.0.0",
+                "mode": "sendrecv",
+                "payloads": [],
+                "rtcp": {}
+            });
+            var mblock = fillTemplate(templates.mblock, mediaDescription);
+
+            var payloadInfo = {"rtpMapLines": "", "fmtpLines": "", "nackLines": "",
+                "nackpliLines": "", "ccmfirLines": "", "ericScreamLines": ""};
+            mediaDescription.payloads.forEach(function (payload) {
+                if (payloadInfo.fmt)
+                    payloadInfo.fmt += " " + payload.type;
+                else
+                    payloadInfo.fmt = payload.type;
+                if (!payload.channels || payload.channels == 1)
+                    payload.channels = null;
+                payloadInfo.rtpMapLines += fillTemplate(templates.rtpMap, payload);
+                if (payload.parameters) {
+                    var fmtpInfo = { "type": payload.type, "parameters": "" };
+                    for (var p in payload.parameters) {
+                        var param = p.replace(/([A-Z])([a-z])/g, function (_, a, b) {
+                            return "-" + a.toLowerCase() + b;
+                        });
+                        if (fmtpInfo.parameters)
+                            fmtpInfo.parameters += ";";
+                        fmtpInfo.parameters += param + "=" + payload.parameters[p];
+                    }
+                    payloadInfo.fmtpLines += fillTemplate(templates.fmtp, fmtpInfo);
+                }
+                if (payload.nack)
+                    payloadInfo.nackLines += fillTemplate(templates.nack, payload);
+                if (payload.nackpli)
+                    payloadInfo.nackpliLines += fillTemplate(templates.nackpli, payload);
+                if (payload.ccmfir)
+                    payloadInfo.ccmfirLines += fillTemplate(templates.ccmfir, payload);
+                if (payload.ericscream)
+                    payloadInfo.ericScreamLines += fillTemplate(templates.ericscream, payload);
+            });
+            mblock = fillTemplate(mblock, payloadInfo);
+
+            var rtcpInfo = {"rtcpLine": "", "rtcpMuxLine": ""};
+            if (mediaDescription.rtcp.port) {
+                addDefaults(mediaDescription.rtcp, {
+                    "netType": "IN",
+                    "addressType": "IP4",
+                    "address": ""
+                });
+                if (!mediaDescription.rtcp.address)
+                    mediaDescription.rtcp.netType = mediaDescription.rtcp.addressType = "";
+                rtcpInfo.rtcpLine = fillTemplate(templates.rtcp, mediaDescription.rtcp);
+            }
+            if (mediaDescription.rtcp.mux)
+                rtcpInfo.rtcpMuxLine = templates.rtcpMux;
+            mblock = fillTemplate(mblock, rtcpInfo);
+
+            var srcAttributeLines = { "cnameLines": "", "msidLines": "" };
+            var srcAttributes = {
+                "cname": mediaDescription.cname,
+                "mediaStreamId": mediaDescription.mediaStreamId,
+                "mediaStreamTrackId": mediaDescription.mediaStreamTrackId
+            };
+            if (mediaDescription.cname && mediaDescription.ssrcs) {
+                mediaDescription.ssrcs.forEach(function (ssrc) {
+                    srcAttributes.ssrc = ssrc;
+                    srcAttributeLines.cnameLines += fillTemplate(templates.cname, srcAttributes);
+                    if (mediaDescription.mediaStreamId && mediaDescription.mediaStreamTrackId)
+                        srcAttributeLines.msidLines += fillTemplate(templates.msid, srcAttributes);
+                });
+            } else if (mediaDescription.mediaStreamId && mediaDescription.mediaStreamTrackId) {
+                srcAttributes.ssrc = null;
+                srcAttributeLines.msidLines += fillTemplate(templates.msid, srcAttributes);
+            }
+            mblock = fillTemplate(mblock, srcAttributeLines);
+
+            var iceInfo = {"iceCredentialLines": "", "iceOptionLine": "", "candidateLines": ""};
+            if (mediaDescription.ice) {
+                iceInfo.iceCredentialLines = fillTemplate(templates.iceCredentials,
+                    mediaDescription.ice);
+                if (mediaDescription.ice.iceOptions && mediaDescription.ice.iceOptions.trickle)
+                    iceInfo.iceOptionLine = templates.iceOptionsTrickle;
+                if (mediaDescription.ice.candidates) {
+                    mediaDescription.ice.candidates.forEach(function (candidate) {
+                        addDefaults(candidate, {
+                            "relatedAddress": null,
+                            "relatedPort": null,
+                            "tcpType": null
+                        });
+                        iceInfo.candidateLines += fillTemplate(templates.candidate, candidate);
+                    });
+                }
+            }
+            mblock = fillTemplate(mblock, iceInfo);
+
+            var dtlsInfo = { "dtlsFingerprintLine": "", "dtlsSetupLine": "" };
+            if (mediaDescription.dtls) {
+                if (mediaDescription.dtls.fingerprint) {
+                    dtlsInfo.dtlsFingerprintLine = fillTemplate(templates.dtlsFingerprint,
+                        mediaDescription.dtls);
+                }
+                addDefaults(mediaDescription.dtls, {"setup": "actpass"});
+                dtlsInfo.dtlsSetupLine = fillTemplate(templates.dtlsSetup, mediaDescription.dtls);
+            }
+            mblock = fillTemplate(mblock, dtlsInfo);
+
+            var sctpInfo = {"sctpmapLine": "", "fmt": ""};
+            if (mediaDescription.sctp) {
+                addDefaults(mediaDescription.sctp, {"streams": null});
+                sctpInfo.sctpmapLine = fillTemplate(templates.sctpmap, mediaDescription.sctp);
+                sctpInfo.fmt = mediaDescription.sctp.port;
+            }
+            mblock = fillTemplate(mblock, sctpInfo);
+
+            sdpText += mblock;
+        });
+
+        return sdpText;
+    };
+})();
+
+if (typeof(module) != "undefined" && typeof(exports) != "undefined")
+    module.exports = SDP;
 /*
  * Copyright (C) 2014-2015 Ericsson AB. All rights reserved.
  * Copyright (C) 2015 Collabora Ltd.
@@ -150,10 +1314,33 @@
 
     var dtlsInfo;
     var deferredCreatePeerHandlers = [];
-
-    (function () {
+    var called = false;
+    var dtlsGen;
+   /* var dtlsGen = new Promise( function (resolve,reject) {
         var client = {};
         client.dtlsInfoGenerationDone = function (generatedDtlsInfo) {
+	        called = true;
+            dtlsInfo = generatedDtlsInfo;
+            if (!dtlsInfo)
+                console.log("createKeys returned without any dtlsInfo - anything involving use of PeerConnection won't work");
+            else {
+                var func;
+                while ((func = deferredCreatePeerHandlers.shift()))
+                    func();
+            }
+            resolve(dtlsInfo);
+            bridge.removeObjectRef(client);
+        }
+
+
+        bridge.createKeys(bridge.createObjectRef(client, "dtlsInfoGenerationDone"));
+
+    });*/
+
+    var dtlsGen = function () {
+        var client = {};
+        client.dtlsInfoGenerationDone = function (generatedDtlsInfo) {
+	        called = true;
             dtlsInfo = generatedDtlsInfo;
             if (!dtlsInfo)
                 console.log("createKeys returned without any dtlsInfo - anything involving use of PeerConnection won't work");
@@ -167,7 +1354,8 @@
 
 
         bridge.createKeys(bridge.createObjectRef(client, "dtlsInfoGenerationDone"));
-    })();
+
+    };
 
     function getUserMedia(options) {
         checkArguments("getUserMedia", "dictionary", 1, arguments);
@@ -472,7 +1660,7 @@
         function completeQueuedOperation(callback) {
             queuedOperations.shift();
             if (queuedOperations.length)
-                setTimeout(queuedOperations[0]);
+                setTimeout(queuedOperations[0],2000);
 
             try {
                 callback();
@@ -547,9 +1735,11 @@
         }
 
         function queuedCreateOffer(resolve, reject, options) {
-          /* var dtlsInfo = { "dtlsFingerprintLine": "", "dtlsSetupLine": ""};*/
-         //3iwom change
-         var dtlsInfo = { "dtlsFingerprintLine": "", "dtlsSetupLine": "" , "fingerprint" :"1A:3C:A9:43:47:14:D1:12:E3:6E:C0:D5:19:14:EE:57:F6:FC:F9:1F:18:64:65:79:8B:AA:88:EB:3E:1A:B6:69","fingerprintHashFunction" :"sha-256"};
+	       /* dtlsGen.then(function(){
+
+	        },function(){
+
+	        });*/
             options = options || {};
             options.offerToReceiveAudio = +options.offerToReceiveAudio || 0;
             options.offerToReceiveVideo = +options.offerToReceiveVideo || 0;
@@ -1832,3 +3022,5 @@
     };
 
 })(self);
+
+})();
