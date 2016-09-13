@@ -420,8 +420,6 @@ function WebSocketServer(port, bindAddress) {
         var i;
         var key = [];
         var keyHeader = request.headers["sec-websocket-key"];
-         //3iwom change
-        request.headers['Access-Control-Allow-Origin'] = "*";
         for (i = 0; i < keyHeader.length; i++)
             key.push(keyHeader.charCodeAt(i));
         var token = key.concat([
@@ -436,7 +434,6 @@ function WebSocketServer(port, bindAddress) {
         var acceptKey = glib.base64_encode(digest, digest.length);
         var serverProtocol = request.headers["sec-websocket-protocol"] || "";
         var origin = request.headers["origin"];
-
 
         var response =  "HTTP/1.1 101 Switching Protocols\r\n" +
                         "Upgrade: websocket\r\n" +
@@ -484,7 +481,7 @@ function WebSocketServer(port, bindAddress) {
         headers = typeof(response.headers) == "object" ? response.headers : {};
         headers["Connection"] = "close";
         headers["Content-Length"] = body.length;
-        request.headers['Access-Control-Allow-Origin'] = "*";
+
         var responseText = "HTTP/1.1 " + status + " " + phrase + "\r\n";
         for (var key in headers)
             if (headers.hasOwnProperty(key))
