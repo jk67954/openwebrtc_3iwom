@@ -1316,7 +1316,7 @@ if (typeof(module) != "undefined" && typeof(exports) != "undefined")
     var deferredCreatePeerHandlers = [];
     var called = false;
     var dtlsGen;
-    var dtlsGen = new Promise( function (resolve,reject) {
+    dtlsGen = new Promise( function (resolve,reject) {
         var client = {};
         client.dtlsInfoGenerationDone = function (generatedDtlsInfo) {
 	        called = true;
@@ -1328,7 +1328,7 @@ if (typeof(module) != "undefined" && typeof(exports) != "undefined")
                 while ((func = deferredCreatePeerHandlers.shift()))
                     func();
             }
-            resolve(dtlsInfo);
+            resolve();
             bridge.removeObjectRef(client);
         }
 
@@ -1735,7 +1735,7 @@ if (typeof(module) != "undefined" && typeof(exports) != "undefined")
         }
 
         function queuedCreateOffer(resolve, reject, options) {
-	        dtlsGen().then(function (dtlsInfo) {
+	        dtlsGen().then(function () {
             options = options || {};
             options.offerToReceiveAudio = +options.offerToReceiveAudio || 0;
             options.offerToReceiveVideo = +options.offerToReceiveVideo || 0;
