@@ -350,7 +350,7 @@ if (typeof(SDP) == "undefined")
 
             //3iwom change
             var fingerprint = match(mblock, regexps.fingerprint, "mi", sblock);
-            console.Log("FingerPrint is " + fingerprint);
+            //console.Log("FingerPrint is " + fingerprint);
             if (fingerprint) {
                 mediaDescription.dtls = {
                     "fingerprintHashFunction": fingerprint[1].toLowerCase(),
