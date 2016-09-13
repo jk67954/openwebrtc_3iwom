@@ -272,7 +272,6 @@ server.onrequest = function (event) {
     if (event.request.url == "/owr.js") {
         response.status = 200;
         response.headers["Content-Type"] = "text/javascript";
-        response.headers["Access-Control-Allow-Origin"] = "*";
 
         var origin = event.request.headers["origin"] || null;
         var token = originTokens[origin];
