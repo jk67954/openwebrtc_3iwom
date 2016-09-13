@@ -1316,7 +1316,7 @@ if (typeof(module) != "undefined" && typeof(exports) != "undefined")
     var deferredCreatePeerHandlers = [];
     var called = false;
     var dtlsGen;
-   /* var dtlsGen = new Promise( function (resolve,reject) {
+    var dtlsGen = new Promise( function (resolve,reject) {
         var client = {};
         client.dtlsInfoGenerationDone = function (generatedDtlsInfo) {
 	        called = true;
@@ -1335,9 +1335,9 @@ if (typeof(module) != "undefined" && typeof(exports) != "undefined")
 
         bridge.createKeys(bridge.createObjectRef(client, "dtlsInfoGenerationDone"));
 
-    });*/
+    });
 
-    var dtlsGen = function () {
+    /*var dtlsGen = function () {
         var client = {};
         client.dtlsInfoGenerationDone = function (generatedDtlsInfo) {
 	        called = true;
@@ -1355,7 +1355,7 @@ if (typeof(module) != "undefined" && typeof(exports) != "undefined")
 
         bridge.createKeys(bridge.createObjectRef(client, "dtlsInfoGenerationDone"));
 
-    };
+    };*/
 
     function getUserMedia(options) {
         checkArguments("getUserMedia", "dictionary", 1, arguments);
@@ -1660,7 +1660,7 @@ if (typeof(module) != "undefined" && typeof(exports) != "undefined")
         function completeQueuedOperation(callback) {
             queuedOperations.shift();
             if (queuedOperations.length)
-                setTimeout(queuedOperations[0],2000);
+                setTimeout(queuedOperations[0]);
 
             try {
                 callback();
@@ -1735,8 +1735,7 @@ if (typeof(module) != "undefined" && typeof(exports) != "undefined")
         }
 
         function queuedCreateOffer(resolve, reject, options) {
-	        dtlsGen();
-          setTimeout(function () {
+	        dtlsGen().then(function (dtlsInfo) {
             options = options || {};
             options.offerToReceiveAudio = +options.offerToReceiveAudio || 0;
             options.offerToReceiveVideo = +options.offerToReceiveVideo || 0;
@@ -1804,7 +1803,7 @@ if (typeof(module) != "undefined" && typeof(exports) != "undefined")
                     }
                 });
             }
-          },3000);
+
 
 
             completeQueuedOperation(function () {
@@ -1813,6 +1812,9 @@ if (typeof(module) != "undefined" && typeof(exports) != "undefined")
                     "sdp": SDP.generate(localSessionInfoSnapshot)
                 }));
             });
+          });
+
+
         }
 
         this.createAnswer = function () {

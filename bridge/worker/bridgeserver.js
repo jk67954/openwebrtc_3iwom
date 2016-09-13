@@ -142,6 +142,10 @@ server.onaccept = function (event) {
                     });
                 }
             }
+            //3iwom change
+            else {
+              client.dtlsInfoGenerationDone();
+            }
         });
     }
 
@@ -191,7 +195,7 @@ server.onaccept = function (event) {
                     // This option should be removed eventually - only extensions that ask for consent should be allowed to use owr
                     client.gotSources(sourceInfos);
                 }
-            }    
+            }
             else
                 client.noSources("notavailable");
 
