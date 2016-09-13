@@ -1773,8 +1773,7 @@ if (typeof(module) != "undefined" && typeof(exports) != "undefined")
                         "type": kind,
                         "payloads": JSON.parse(JSON.stringify(defaultPayloads[kind])),
                         "rtcp": { "mux": true },
-                        "ice": { "ufrag": randomString(4), "password": randomString(22),
-                        },
+                        "ice": { "ufrag": randomString(4), "password": randomString(22)},
                         "dtls": {
                             "setup": "actpass",
                             "fingerprintHashFunction": dtlsInfo.fingerprintHashFunction,
