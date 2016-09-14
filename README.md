@@ -1,43 +1,13 @@
-<img src="http://static.squarespace.com/static/53f1eedee4b0439bf8d480c5/t/54061d4ae4b0f4290347d846/1411419445727/?format=1500w" alt="OWR Logo" width="200" height="126">
+##openwebrtc编译指南
 
-A flexible, mobile-first, cross-platform WebRTC client framework based on [GStreamer](http://gstreamer.freedesktop.org). OpenWebRTC currently supports iOS, Android, Mac OS X and Linux. Windows support is quite doable too if needed.
+**openwebrtc是一个用于移动平台实现webrtc标准接口的一套框架.他的原理是通过将webrtc接口js注入到浏览器执行native通过c与系统进行调用来实现webrtc在webkit或者说webview的正常运行.**
 
-## Releases
-[Downloadable binary releases are available here](https://github.com/EricssonResearch/openwebrtc/releases).
+**openwebrtc编译的源码非常大,因为他针对了很多平台,引用的库也十分多,这是造成他工程目录大的原因之一,此外他针对不同的architecture回编译成不同的动态库, 光ios平台就有armv7 armv7s arm64 模拟器的x86等多个平台 ,因此你要预留10G以上的HDD空间来.**
 
-## API Documentation
-[API documentation is available here](http://ericssonresearch.github.io/openwebrtc/docs/gtk-doc/dev/).
+####首先讲一下编译的过程,openwebrtc使用cerbero编译	    [OpenWebRTC](https://github.com/EricssonResearch/cerbero)
 
-## Examples using OpenWebRTC
-Bowser is a mobile browser that uses OpenWebRTC as a WebRTC back-end. As you can see [here](https://github.com/EricssonResearch/bowser), Bowser is in fact a very thin layer of UI code on top of OpenWebRTC.
-
-We are also writing some [example code and applications](https://github.com/EricssonResearch/openwebrtc-examples) to help you get started using OpenWebRTC on various platforms.
-
-Before being released publicly, OpenWebRTC has been used by Ericsson Research to build several research prototypes such as [this](http://www.ericsson.com/research-blog/context-aware-communication/field-service-support-google-glass-webrtc/) and [that](http://www.ericsson.com/research-blog/5g/remote-excavation-using-webrtc-real-time-video-eye-5g/). 
-
-## Building
-Take a look at the [Building OpenWebRTC](https://github.com/EricssonResearch/openwebrtc/wiki/Building-OpenWebRTC) wiki page for information about how to build the framework.
-
-## Community
-For support, questions and discussions:
-* Public [mailing list](https://groups.google.com/forum/#!forum/openwebrtc)
-* Twitter: [@OpenWebRTC](https://twitter.com/OpenWebRTC)
-* [IRC](http://webchat.freenode.net/?channels=openwebrtc) - irc://chat.freenode.net/openwebrtc
-* [OpenWebRTC blog](http://www.openwebrtc.org/blog/) (maintained by Ericsson Research)
-* [Issue tracker](https://github.com/EricssonResearch/openwebrtc/issues)
-
-## License
-OpenWebRTC is released under BSD-2 clause. See LICENSE for details.
-
-## Background
-
-OpenWebRTC is built on the belief that the [WebRTC standard](http://www.w3.org/2011/04/webrtc/) would transcend the pure browser environment and that native apps, implementing the same protocols and API's, would become an important part of the WebRTC ecosystem. This is especially true on mobile platforms where native app distribution is often preferred over pure web apps. Native OpenWebRTC apps can either talk to other native apps or browsers that support WebRTC. OpenWebRTC can also provide the WebRTC-backend to web browsers.
-
-Having independent, interoperable, implementations is important for the health of any standard, and WebRTC is no exception. The ambition of OpenWebRTC is to follow the WebRTC standard closely as it continues to evolve. 
-
-## Architecture
-OpenWebRTC was designed for flexibility and modularity. The bulk of the API layer is implemented in JavaScript, making it super fast to modify and extend with new functionality. Below is a simplified sketch of the architecture.
-
-<img src="http://static.squarespace.com/static/53f1eedee4b0439bf8d480c5/t/54241e32e4b04e698dffecec/1411653170102/Arch.png" alt="Simplified architecture" width="445" height="247">
-
-Applications built on top of OpenWebRTC will be interoperable with popular WebRTC-enabled browsers such as Chrome and Firefox.
+    1.osx host编译 没问题 直接编译链接
+    2.ios平台编译期间会报错 直接3 enter 跳过 是glib报错 不用问 编译结束 安装 ~/cerbero/openwebrtc-devel-0.3.0-ios-universal.pkg 
+      会输出framework到~/Library/Developer/OpenWebRTC/iPhoneOS.sdk/下面
+    3.因为每次编译都会compare和git上的版本号 发现不同就会更新到最新版本所以建议通过修改git地址来修改
+      编译代码,通过修改/cerbero/recipts/openwebrtc.recipe 文件中的git地址来修改源码
