@@ -281,6 +281,8 @@ server.onrequest = function (event) {
     } else {
         response.status = 404;
         response.headers["Content-Type"] = "text/html";
+        //3iwom change
+        response.headers["Access-Control-Allow-Origin"] = "*";
         response.body = "<!doctype html><html><body><h1>404 Not Found</h1></body></html>";
     }
     event.request.respond(response);
