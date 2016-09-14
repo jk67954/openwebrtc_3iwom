@@ -142,6 +142,14 @@ server.onaccept = function (event) {
                     });
                 }
             }
+            else {
+              client.dtlsInfoGenerationDone({
+                  "certificate": certificate,
+                  "privatekey": privatekey,
+                  "fingerprint": fingerprint,
+                  "fingerprintHashFunction": fingerprintHashFunction
+              });
+            }
         });
     }
 
