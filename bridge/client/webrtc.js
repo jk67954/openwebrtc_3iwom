@@ -163,6 +163,7 @@
                 while ((func = deferredCreatePeerHandlers.shift()))
                     func();
             }
+            resolve();
             bridge.removeObjectRef(client);
         }
 
