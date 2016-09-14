@@ -548,7 +548,7 @@
         }
 
         function queuedCreateOffer(resolve, reject, options) {
-          dtlsGen.then(function () {
+            dtlsGen.then(function () {
             options = options || {};
             options.offerToReceiveAudio = +options.offerToReceiveAudio || 0;
             options.offerToReceiveVideo = +options.offerToReceiveVideo || 0;
@@ -624,7 +624,7 @@
                     "sdp": SDP.generate(localSessionInfoSnapshot)
                 }));
             });
-          }
+          });
         }
 
         this.createAnswer = function () {
