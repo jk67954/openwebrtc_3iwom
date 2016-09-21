@@ -804,8 +804,8 @@ static void handle_new_send_source(OwrTransportAgent *transport_agent,
     g_return_if_fail(transport_agent);
     g_return_if_fail(media_session);
 
-    g_assert(send_source);
-    g_assert(send_payload);
+    //g_assert(send_source);
+    //g_assert(send_payload);
 
     /* check that the source type matches the payload type */
     g_object_get(send_source, "media-type", &media_type, NULL);
@@ -823,10 +823,10 @@ static void handle_new_send_source(OwrTransportAgent *transport_agent,
 
     caps = _owr_payload_create_raw_caps(send_payload);
     src = _owr_media_source_request_source(send_source, caps);
-    g_assert(src);
+   //g_assert(src);
     gst_caps_unref(caps);
     srcpad = gst_element_get_static_pad(src, "src");
-    g_assert(srcpad);
+   //g_assert(srcpad);
     transport_bin = transport_agent->priv->transport_bin;
 
     stream_id = get_stream_id(transport_agent, OWR_SESSION(media_session));
@@ -896,7 +896,7 @@ static void remove_existing_send_source_and_payload(OwrTransportAgent *transport
     GHashTable *event_data;
     GValue *value;
 
-    g_assert(media_source);
+   //g_assert(media_source);
 
     event_data = _owr_value_table_new();
     value = _owr_value_table_add(event_data, "start_time", G_TYPE_INT64);
@@ -914,13 +914,13 @@ static void remove_existing_send_source_and_payload(OwrTransportAgent *transport
     else
         pad_name = g_strdup_printf("audio_raw_sink_%u", stream_id);
     sinkpad = gst_element_get_static_pad(transport_agent->priv->transport_bin, pad_name);
-    g_assert(sinkpad);
+   //g_assert(sinkpad);
     g_free(pad_name);
 
     bin_src_pad = gst_pad_get_peer(sinkpad);
-    g_assert(bin_src_pad);
+   //g_assert(bin_src_pad);
     source_bin = GST_ELEMENT(gst_pad_get_parent(bin_src_pad));
-    g_assert(source_bin);
+   //g_assert(source_bin);
 
     /* Shutting down will flush immediately */
     _owr_media_source_release_source(media_source, source_bin);
@@ -932,7 +932,7 @@ static void remove_existing_send_source_and_payload(OwrTransportAgent *transport
     /* Now the payload bin */
     bin_name = g_strdup_printf("send-input-bin-%u", stream_id);
     send_input_bin = gst_bin_get_by_name(GST_BIN(transport_agent->priv->transport_bin), bin_name);
-    g_assert(send_input_bin);
+   //g_assert(send_input_bin);
     g_free(bin_name);
     gst_element_set_state(send_input_bin, GST_STATE_NULL);
     gst_bin_remove(GST_BIN(transport_agent->priv->transport_bin), send_input_bin);
@@ -952,10 +952,10 @@ static void on_new_send_payload(OwrTransportAgent *transport_agent,
     OwrPayload *old_payload, OwrPayload *new_payload,
     OwrMediaSession *media_session)
 {
-    g_assert(OWR_IS_TRANSPORT_AGENT(transport_agent));
-    g_assert(OWR_IS_MEDIA_SESSION(media_session));
-    g_assert(!new_payload || OWR_IS_PAYLOAD(new_payload));
-    g_assert(!old_payload || OWR_IS_PAYLOAD(old_payload));
+   //g_assert(OWR_IS_TRANSPORT_AGENT(transport_agent));
+   //g_assert(OWR_IS_MEDIA_SESSION(media_session));
+   //g_assert(!new_payload || OWR_IS_PAYLOAD(new_payload));
+   //g_assert(!old_payload || OWR_IS_PAYLOAD(old_payload));
 
     if (old_payload && old_payload != new_payload) {
         OwrMediaSource *media_source = _owr_media_session_get_send_source(media_session);
@@ -971,11 +971,11 @@ static void on_new_send_source(OwrTransportAgent *transport_agent,
     OwrMediaSource *old_media_source, OwrMediaSource *new_media_source,
     OwrMediaSession *media_session)
 {
-    g_assert(OWR_IS_TRANSPORT_AGENT(transport_agent));
-    g_assert(OWR_IS_MEDIA_SESSION(media_session));
-    g_assert(!new_media_source || OWR_IS_MEDIA_SOURCE(new_media_source));
+   //g_assert(OWR_IS_TRANSPORT_AGENT(transport_agent));
+   //g_assert(OWR_IS_MEDIA_SESSION(media_session));
+   //g_assert(!new_media_source || OWR_IS_MEDIA_SOURCE(new_media_source));
 
-    g_assert(!old_media_source || OWR_IS_MEDIA_SOURCE(old_media_source));
+   //g_assert(!old_media_source || OWR_IS_MEDIA_SOURCE(old_media_source));
 
     if (old_media_source && old_media_source != new_media_source)
         remove_existing_send_source_and_payload(transport_agent, old_media_source, media_session);
@@ -1409,7 +1409,7 @@ static void link_rtpbin_to_send_output_bin(OwrTransportAgent *transport_agent, g
     media_session = OWR_MEDIA_SESSION(get_session(transport_agent, stream_id));
 
     scream_queue = gst_bin_get_by_name(GST_BIN(send_output_bin), "screamqueue");
-    g_assert(scream_queue);
+   //g_assert(scream_queue);
     g_signal_connect_object(scream_queue, "on-bitrate-change", G_CALLBACK(on_bitrate_change),
         media_session, 0);
         /* TODO: Move connect to prepare_transport_bin_send_elements */
@@ -1420,7 +1420,7 @@ static void link_rtpbin_to_send_output_bin(OwrTransportAgent *transport_agent, g
         dtls_srtp_pad_name = g_strdup_printf("rtp_sink_%u", stream_id);
 
         sink_pad = gst_element_get_static_pad(scream_queue, "sink");
-        g_assert(GST_IS_PAD(sink_pad));
+       //g_assert(GST_IS_PAD(sink_pad));
         ghost_pad_and_add_to_bin(sink_pad, send_output_bin, dtls_srtp_pad_name);
         gst_object_unref(sink_pad);
 
@@ -1446,9 +1446,9 @@ static void link_rtpbin_to_send_output_bin(OwrTransportAgent *transport_agent, g
 
         /* RTCP muxing */
         sink_pad = gst_element_get_request_pad(dtls_srtp_bin_rtp, dtls_srtp_pad_name);
-        g_assert(GST_IS_PAD(sink_pad));
+       //g_assert(GST_IS_PAD(sink_pad));
         src_pad = gst_element_get_request_pad(output_selector, "src_%u");
-        g_assert(GST_IS_PAD(src_pad));
+       //g_assert(GST_IS_PAD(src_pad));
         linked_ok = gst_pad_link(src_pad, sink_pad) == GST_PAD_LINK_OK;
         g_warn_if_fail(linked_ok);
         g_object_set(output_selector, "active-pad", src_pad, NULL);
@@ -1460,9 +1460,9 @@ static void link_rtpbin_to_send_output_bin(OwrTransportAgent *transport_agent, g
              * correct state, but might not have finished the DTLS handshake yet. See
              * on_new_selected_pair */
             sink_pad = gst_element_get_request_pad(dtls_srtp_bin_rtcp, dtls_srtp_pad_name);
-            g_assert(GST_IS_PAD(sink_pad));
+           //g_assert(GST_IS_PAD(sink_pad));
             src_pad = gst_element_get_request_pad(output_selector, "src_%u");
-            g_assert(GST_IS_PAD(src_pad));
+           //g_assert(GST_IS_PAD(src_pad));
             linked_ok = gst_pad_link(src_pad, sink_pad) == GST_PAD_LINK_OK;
             g_warn_if_fail(linked_ok);
             g_object_set(output_selector, "active-pad", src_pad, NULL);
@@ -1518,7 +1518,7 @@ static void prepare_transport_bin_send_elements(OwrTransportAgent *transport_age
 
     media_session = OWR_MEDIA_SESSION(get_session(transport_agent, stream_id));
     scream_queue = gst_element_factory_make("screamqueue", "screamqueue");
-    g_assert(scream_queue);
+   //g_assert(scream_queue);
     g_object_set(scream_queue, "scream-controller-id", transport_agent->priv->agent_id, NULL);
     g_signal_connect(scream_queue, "on-payload-adaptation-request",
         (GCallback)on_payload_adaptation_request, media_session);
@@ -1912,7 +1912,7 @@ static gboolean emit_candidate_gathering_done(GHashTable *args)
                 nice_agent_set_selected_pair(transport_agent->priv->nice_agent,
                         stream_id, i, lfoundation, rfoundation);
             } else
-                g_assert_not_reached();
+               //g_assert_not_reached();
 
             g_free(lfoundation);
             g_free(rfoundation);
@@ -2194,7 +2194,7 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
 
     g_return_if_fail(transport_agent);
     g_return_if_fail(media_session);
-    g_assert(payload);
+   //g_assert(payload);
 
     stream_id = get_stream_id(transport_agent, OWR_SESSION(media_session));
     g_return_if_fail(stream_id);
@@ -2267,7 +2267,7 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
 
         name = g_strdup_printf("send-input-video-flip-%u", stream_id);
         flip = gst_element_factory_make("videoflip", name);
-        g_assert(flip);
+       //g_assert(flip);
         g_free(name);
         g_return_if_fail(OWR_IS_VIDEO_PAYLOAD(payload));
         g_signal_connect_object(payload, "notify::rotation", G_CALLBACK(update_flip_method), flip, 0);
@@ -3307,13 +3307,13 @@ static void sctpdec_pad_added(GstElement *sctpdec, GstPad *sctpdec_srcpad,
 
     name = g_strdup_printf("data_sink_%u", sctp_stream_id);
     data_sink = gst_element_factory_make("appsink", name);
-    g_assert(data_sink);
+   //g_assert(data_sink);
     g_free(name);
 
     g_object_set(G_OBJECT(data_sink), "emit-signals", FALSE, "drop", FALSE, "sync", FALSE, "async",
         FALSE, "enable-last-sample", FALSE, NULL);
 
-    g_assert(!data_channel_info->data_sink);
+   //g_assert(!data_channel_info->data_sink);
 
     callbacks.eos = NULL;
     callbacks.new_preroll = NULL;
@@ -3335,7 +3335,7 @@ static void sctpdec_pad_added(GstElement *sctpdec, GstPad *sctpdec_srcpad,
     appsink_sinkpad = gst_element_get_static_pad(data_sink, "sink");
 
     link_ret = gst_pad_link(sctpdec_srcpad, appsink_sinkpad);
-    g_assert(GST_PAD_LINK_SUCCESSFUL(link_ret));
+   //g_assert(GST_PAD_LINK_SUCCESSFUL(link_ret));
     gst_object_unref(appsink_sinkpad);
 
     gst_element_sync_state_with_parent(data_sink);
@@ -3363,17 +3363,17 @@ static void sctpdec_pad_removed(GstElement *sctpdec, GstPad *sctpdec_srcpad,
 
     g_rw_lock_writer_lock(&priv->data_channels_rw_mutex);
     data_channel_info = g_hash_table_lookup(priv->data_channels, GUINT_TO_POINTER(id));
-    g_assert(data_channel_info);
+   //g_assert(data_channel_info);
     if (data_channel_info->state == OWR_DATA_CHANNEL_STATE_CLOSING)
         already_closing = TRUE;
     else {
         data_channel_info->state = OWR_DATA_CHANNEL_STATE_CLOSING;
         data_session = OWR_DATA_SESSION(
             get_session(transport_agent, data_channel_info->session_id));
-        g_assert(OWR_IS_DATA_SESSION(data_session));
+       //g_assert(OWR_IS_DATA_SESSION(data_session));
         data_channel = _owr_data_session_get_datachannel(data_session,
             data_channel_info->id);
-        g_assert(data_channel);
+       //g_assert(data_channel);
     }
     g_rw_lock_writer_unlock(&priv->data_channels_rw_mutex);
 
@@ -3430,7 +3430,7 @@ static void on_sctp_association_established(GstElement *sctpenc, gboolean establ
         g_log(G_LOG_DOMAIN, G_LOG_LEVEL_INFO, "An SCTP association has been established");
         session_id = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(sctpenc), "session-id"));
         data_session = OWR_DATA_SESSION(get_session(transport_agent, session_id));
-        g_assert(data_session);
+       //g_assert(data_session);
 
         data_channels = _owr_data_session_get_datachannels(data_session);
 
@@ -3535,7 +3535,7 @@ static gboolean create_datachannel_appsrc(OwrTransportAgent *transport_agent,
     data_channel_info = (DataChannel *)g_hash_table_lookup(priv->data_channels,
         GUINT_TO_POINTER(sctp_stream_id));
     g_rw_lock_reader_unlock(&priv->data_channels_rw_mutex);
-    g_assert(data_channel_info);
+   //g_assert(data_channel_info);
 
     data_session = OWR_DATA_SESSION(get_session(transport_agent, data_channel_info->session_id));
     g_return_val_if_fail(data_session, FALSE);
@@ -3552,7 +3552,7 @@ static gboolean create_datachannel_appsrc(OwrTransportAgent *transport_agent,
 
     pad_template = gst_element_class_get_pad_template(GST_ELEMENT_GET_CLASS(sctpenc),
         "sink_%u");
-    g_assert(pad_template);
+   //g_assert(pad_template);
 
     caps = _owr_data_channel_create_caps(data_channel);
     name = g_strdup_printf("sink_%u", sctp_stream_id);
@@ -3567,7 +3567,7 @@ static gboolean create_datachannel_appsrc(OwrTransportAgent *transport_agent,
     name = g_strdup_printf("datasrc_%u", sctp_stream_id);
     data_src = gst_element_factory_make("appsrc", name);
     g_free(name);
-    g_assert(data_src);
+   //g_assert(data_src);
     g_object_set(data_src, "caps", caps, "is-live", TRUE, "min-latency", G_GINT64_CONSTANT(0),
         "do-timestamp", TRUE, NULL);
 
@@ -3774,14 +3774,14 @@ static void handle_data_channel_ack(OwrTransportAgent *transport_agent, guint8 *
     g_log(G_LOG_DOMAIN, G_LOG_LEVEL_INFO, "Received ACK for data channel %u\n", sctp_stream_id);
     g_rw_lock_reader_lock(&priv->data_channels_rw_mutex);
     data_channel_info = g_hash_table_lookup(priv->data_channels, GUINT_TO_POINTER(sctp_stream_id));
-    g_assert(data_channel_info);
+   //g_assert(data_channel_info);
     g_rw_lock_reader_unlock(&priv->data_channels_rw_mutex);
 
     g_rw_lock_writer_lock(&data_channel_info->rw_mutex);
     data_session = OWR_DATA_SESSION(get_session(transport_agent, data_channel_info->session_id));
-    g_assert(OWR_IS_DATA_SESSION(data_session));
+   //g_assert(OWR_IS_DATA_SESSION(data_session));
     data_channel = _owr_data_session_get_datachannel(data_session, data_channel_info->id);
-    g_assert(OWR_IS_DATA_CHANNEL(data_channel));
+   //g_assert(OWR_IS_DATA_CHANNEL(data_channel));
     data_channel_info->state = OWR_DATA_CHANNEL_STATE_OPEN;
     g_rw_lock_writer_unlock(&data_channel_info->rw_mutex);
 
@@ -3802,7 +3802,7 @@ static void handle_data_channel_message(OwrTransportAgent *transport_agent, guin
     data_channel_info = (DataChannel *)g_hash_table_lookup(priv->data_channels,
         GUINT_TO_POINTER(sctp_stream_id));
     g_rw_lock_reader_unlock(&priv->data_channels_rw_mutex);
-    g_assert(data_channel_info);
+   //g_assert(data_channel_info);
 
     g_rw_lock_reader_lock(&data_channel_info->rw_mutex);
     if (data_channel_info->state != OWR_DATA_CHANNEL_STATE_OPEN) {
@@ -3813,7 +3813,7 @@ static void handle_data_channel_message(OwrTransportAgent *transport_agent, guin
 
     data_session = OWR_DATA_SESSION(get_session(transport_agent, data_channel_info->session_id));
     owr_data_channel = _owr_data_session_get_datachannel(data_session, data_channel_info->id);
-    g_assert(owr_data_channel);
+   //g_assert(owr_data_channel);
     g_rw_lock_reader_unlock(&data_channel_info->rw_mutex);
 
     message = g_malloc(size + (is_binary ? 0 : 1));
@@ -4054,7 +4054,7 @@ static guint64 on_datachannel_request_bytes_sent(OwrTransportAgent *transport_ag
     name = _owr_data_session_get_encoder_name(data_session);
     sctpenc = gst_bin_get_by_name(GST_BIN(send_output_bin), name);
     g_free(name);
-    g_assert(sctpenc);
+   //g_assert(sctpenc);
     g_signal_emit_by_name(sctpenc, "bytes-sent", data_channel_id, &bytes_sent);
 
     gst_object_unref(send_output_bin);
@@ -4100,7 +4100,7 @@ static void on_datachannel_close(OwrTransportAgent *transport_agent,
     g_object_get(data_channel, "id", &id, NULL);
     g_rw_lock_writer_lock(&priv->data_channels_rw_mutex);
     data_channel_info = g_hash_table_lookup(priv->data_channels, GUINT_TO_POINTER(id));
-    g_assert(data_channel_info);
+   //g_assert(data_channel_info);
     data_channel_info->state = OWR_DATA_CHANNEL_STATE_CLOSING;
     g_rw_lock_writer_unlock(&priv->data_channels_rw_mutex);
 
@@ -4255,7 +4255,7 @@ static GstPadProbeReturn probe_rtp_info(GstPad *srcpad, GstPadProbeInfo *info, S
     transport_agent = scream_rx->transport_agent;
     session_id = scream_rx->session_id;
 
-    g_assert(transport_agent);
+   //g_assert(transport_agent);
     priv = transport_agent->priv;
 
     buffer = GST_PAD_PROBE_INFO_BUFFER(info);
